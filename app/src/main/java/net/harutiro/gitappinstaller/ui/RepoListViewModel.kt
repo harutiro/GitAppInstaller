@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import net.harutiro.gitappinstaller.AppContainerHolder
+import net.harutiro.gitappinstaller.data.auth.TokenStore
 import net.harutiro.gitappinstaller.data.remote.NoReleaseException
 import net.harutiro.gitappinstaller.data.remote.RateLimitedException
 import net.harutiro.gitappinstaller.data.remote.ReleaseRemoteDataSource
@@ -30,6 +31,7 @@ import net.harutiro.gitappinstaller.installer.ApkInstaller
 import net.harutiro.gitappinstaller.installer.DownloadEvent
 import net.harutiro.gitappinstaller.installer.InstallResult
 import net.harutiro.gitappinstaller.installer.InstallResultReceiver
+import net.harutiro.gitappinstaller.installer.InstalledInfo
 import net.harutiro.gitappinstaller.installer.InstalledPackageInfo
 import java.io.IOException
 
@@ -39,6 +41,7 @@ class RepoListViewModel(
     private val releaseDataSource: ReleaseRemoteDataSource,
     private val apkDownloader: ApkDownloader,
     private val apkInstaller: ApkInstaller,
+    private val tokenStore: TokenStore,
 ) : AndroidViewModel(app) {
 
     private val _items = MutableStateFlow<List<RepoUiState>>(emptyList())
@@ -64,8 +67,23 @@ class RepoListViewModel(
         viewModelScope.launch {
             InstallResultReceiver.events.collect { result ->
                 when (result) {
-                    is InstallResult.Success -> updateAll { it.copy(isInstalling = false, errorMessage = null) }
-                    is InstallResult.Failure -> updateAll { it.copy(isInstalling = false, errorMessage = result.message) }
+                    is InstallResult.Success -> {
+                        // Persist the tag we just installed so future refreshes can identify
+                        // "already installed this release" even if the APK's versionName
+                        // disagrees with the release tag.
+                        currentInstall?.let { ctx ->
+                            val repo = repoRepository.items.value.firstOrNull { it.id == ctx.repoId }
+                            if (repo != null && ctx.tagName.isNotBlank()) {
+                                runCatching { repoRepository.update(repo.copy(lastInstalledTag = ctx.tagName)) }
+                            }
+                        }
+                        currentInstall = null
+                        updateAll { it.copy(isInstalling = false, errorMessage = null) }
+                    }
+                    is InstallResult.Failure -> {
+                        currentInstall = null
+                        updateAll { it.copy(isInstalling = false, errorMessage = result.message) }
+                    }
                     is InstallResult.PendingUserAction -> { /* OS dialog will appear */ }
                 }
                 refreshAll()
@@ -74,7 +92,7 @@ class RepoListViewModel(
     }
 
     private fun RepoUiState.withInstalledVersion(): RepoUiState =
-        copy(installedVersion = InstalledPackageInfo.installedVersionName(app, repo.applicationId))
+        copy(installedVersion = InstalledPackageInfo.lookup(app, repo.applicationId).versionName)
 
     fun refreshAll() {
         _items.value.forEach { refresh(it.repo.id) }
@@ -86,10 +104,17 @@ class RepoListViewModel(
             mutate(id) { it.copy(isChecking = true, errorMessage = null) }
             try {
                 val release = releaseDataSource.fetchLatestRelease(target.repo.owner, target.repo.repo)
-                val installed = InstalledPackageInfo.installedVersionName(app, target.repo.applicationId)
-                val state = computeState(release.apkAsset != null, target.repo.applicationId, installed, release.versionName)
-                Log.i(TAG, "refresh($id) appId=${target.repo.applicationId} installed=$installed latest=${release.versionName} -> $state")
-                mutate(id) { it.copy(release = release, installedVersion = installed, state = state, isChecking = false) }
+                val info = InstalledPackageInfo.lookup(app, target.repo.applicationId)
+                val state = computeState(
+                    hasApk = release.apkAsset != null,
+                    applicationId = target.repo.applicationId,
+                    info = info,
+                    latestTag = release.tagName,
+                    latestVersion = release.versionName,
+                    lastInstalledTag = target.repo.lastInstalledTag,
+                )
+                Log.i(TAG, "refresh($id) appId=${target.repo.applicationId} installed=${info.installed} ver=${info.versionName} latestTag=${release.tagName} lastTag=${target.repo.lastInstalledTag} -> $state")
+                mutate(id) { it.copy(release = release, installedVersion = info.versionName, state = state, isChecking = false) }
             } catch (e: RepoNotFoundException) {
                 mutate(id) { it.copy(isChecking = false, errorMessage = "Repository not found (Public only)") }
             } catch (e: RateLimitedException) {
@@ -109,6 +134,9 @@ class RepoListViewModel(
     }
 
     private val installJobs = mutableMapOf<Long, Job>()
+
+    private data class InstallContext(val repoId: Long, val tagName: String)
+    @Volatile private var currentInstall: InstallContext? = null
 
     fun install(id: Long) {
         Log.i(TAG, "install($id) tapped")
@@ -134,8 +162,20 @@ class RepoListViewModel(
         installJobs[id]?.cancel()
         installJobs[id] = viewModelScope.launch {
             mutate(id) { it.copy(isInstalling = true, errorMessage = null) }
-            Log.i(TAG, "install: downloading ${asset.downloadUrl}")
-            apkDownloader.download(asset.downloadUrl, asset.name).collect { ev ->
+            val token = tokenStore.current()
+            // For private repos we must use the assets API URL with auth + octet-stream Accept;
+            // for public repos the browser_download_url works without auth.
+            val (downloadUrl, headers) = if (!token.isNullOrBlank()) {
+                asset.apiAssetUrl to mapOf(
+                    "Authorization" to "Bearer $token",
+                    "Accept" to "application/octet-stream",
+                    "User-Agent" to "GitAppInstaller/1.0",
+                )
+            } else {
+                asset.downloadUrl to emptyMap()
+            }
+            Log.i(TAG, "install: downloading $downloadUrl (auth=${!token.isNullOrBlank()})")
+            apkDownloader.download(downloadUrl, asset.name, headers).collect { ev ->
                 when (ev) {
                     is DownloadEvent.Progress -> { /* could surface progress in UI later */ }
                     is DownloadEvent.Completed -> {
@@ -148,9 +188,11 @@ class RepoListViewModel(
                             runCatching { repoRepository.update(target.repo.copy(applicationId = pkg)) }
                         }
                         try {
+                            currentInstall = InstallContext(id, target.release?.tagName.orEmpty())
                             apkInstaller.install(ev.file, target.repo.displayName)
                         } catch (t: Throwable) {
                             Log.e(TAG, "install: ApkInstaller.install threw", t)
+                            currentInstall = null
                             mutate(id) { it.copy(isInstalling = false, errorMessage = t.message ?: "Install failed") }
                         }
                     }
@@ -175,10 +217,25 @@ class RepoListViewModel(
         }
     }
 
-    private fun computeState(hasApk: Boolean, applicationId: String?, installed: String?, latest: String): UpdateState {
+    private fun computeState(
+        hasApk: Boolean,
+        applicationId: String?,
+        info: InstalledInfo,
+        latestTag: String,
+        latestVersion: String,
+        lastInstalledTag: String?,
+    ): UpdateState {
         if (!hasApk) return UpdateState.NO_APK
-        if (applicationId.isNullOrBlank() || installed == null) return UpdateState.NOT_INSTALLED
-        return if (VersionComparator.isNewer(latest, installed)) UpdateState.UPDATE_AVAILABLE else UpdateState.UP_TO_DATE
+        if (applicationId.isNullOrBlank() || !info.installed) return UpdateState.NOT_INSTALLED
+        // If we already installed this exact release tag, treat as up-to-date even if the
+        // APK's versionName disagrees with the release tag (common when the developer forgot
+        // to bump versionName along with the git tag).
+        if (!lastInstalledTag.isNullOrBlank() && lastInstalledTag == latestTag) {
+            return UpdateState.UP_TO_DATE
+        }
+        // Installed but the APK didn't ship a versionName — we can't compare numerically.
+        val installedVer = info.versionName ?: return UpdateState.UP_TO_DATE
+        return if (VersionComparator.isNewer(latestVersion, installedVer)) UpdateState.UPDATE_AVAILABLE else UpdateState.UP_TO_DATE
     }
 
     private fun mutate(id: Long, transform: (RepoUiState) -> RepoUiState) {
@@ -204,6 +261,7 @@ class RepoListViewModel(
                     container.releaseDataSource,
                     container.apkDownloader,
                     container.apkInstaller,
+                    container.tokenStore,
                 )
             }
         }

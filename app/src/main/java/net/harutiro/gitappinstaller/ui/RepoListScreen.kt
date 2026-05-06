@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -52,6 +53,7 @@ import net.harutiro.gitappinstaller.domain.UpdateState
 @Composable
 fun RepoListScreen(
     onAdd: () -> Unit,
+    onOpenSettings: () -> Unit,
     viewModel: RepoListViewModel = viewModel(
         factory = RepoListViewModel.factory(
             LocalContext.current.applicationContext as Application
@@ -77,6 +79,9 @@ fun RepoListScreen(
                 actions = {
                     IconButton(onClick = { viewModel.refreshAll() }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh all")
+                    }
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
                 },
             )

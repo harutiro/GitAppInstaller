@@ -26,7 +26,11 @@ class ApkDownloader(private val context: Context) {
     private val dm: DownloadManager =
         context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
 
-    fun download(url: String, fileName: String): Flow<DownloadEvent> = callbackFlow {
+    fun download(
+        url: String,
+        fileName: String,
+        headers: Map<String, String> = emptyMap(),
+    ): Flow<DownloadEvent> = callbackFlow {
         val safeName = fileName.ifBlank { "download.apk" }
         // Ensure target dir
         val targetDir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "")
@@ -42,8 +46,10 @@ class ApkDownloader(private val context: Context) {
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(true)
 
+        headers.forEach { (k, v) -> request.addRequestHeader(k, v) }
+
         val downloadId = dm.enqueue(request)
-        Log.i(TAG, "enqueued: id=$downloadId url=$url dest=${destFile.absolutePath}")
+        Log.i(TAG, "enqueued: id=$downloadId url=$url headers=${headers.keys} dest=${destFile.absolutePath}")
 
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {

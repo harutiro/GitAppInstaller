@@ -10,6 +10,8 @@ data class TrackedRepo(
     val repo: String,
     val applicationId: String?,
     val displayName: String,
+    /** GitAppInstaller 経由で最後にインストールした GitHub リリースのタグ。 */
+    val lastInstalledTag: String? = null,
 ) {
     val fullName: String get() = "$owner/$repo"
 }

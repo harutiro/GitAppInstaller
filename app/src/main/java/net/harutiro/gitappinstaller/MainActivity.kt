@@ -13,6 +13,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import net.harutiro.gitappinstaller.ui.RepoAddScreen
 import net.harutiro.gitappinstaller.ui.RepoListScreen
+import net.harutiro.gitappinstaller.ui.SettingsScreen
 import net.harutiro.gitappinstaller.ui.theme.GitAppInstallerTheme
 
 class MainActivity : ComponentActivity() {
@@ -31,13 +32,19 @@ private fun App() {
     Surface(modifier = Modifier.fillMaxSize()) {
         NavHost(navController = nav, startDestination = "list") {
             composable("list") {
-                RepoListScreen(onAdd = { nav.navigate("add") })
+                RepoListScreen(
+                    onAdd = { nav.navigate("add") },
+                    onOpenSettings = { nav.navigate("settings") },
+                )
             }
             composable("add") {
                 RepoAddScreen(
                     onBack = { nav.popBackStack() },
                     onSaved = { nav.popBackStack() },
                 )
+            }
+            composable("settings") {
+                SettingsScreen(onBack = { nav.popBackStack() })
             }
         }
     }

@@ -9,7 +9,7 @@ class RepoNotFoundException(message: String) : IOException(message)
 class RateLimitedException(message: String) : IOException(message)
 class NoReleaseException(message: String) : IOException(message)
 
-class ReleaseRemoteDataSource(private val api: GitHubApi = GitHubServiceFactory.api) {
+class ReleaseRemoteDataSource(private val api: GitHubApi) {
 
     suspend fun fetchLatestRelease(owner: String, repo: String): ReleaseInfo {
         val response = api.getLatestRelease(owner, repo)
@@ -48,6 +48,7 @@ class ReleaseRemoteDataSource(private val api: GitHubApi = GitHubServiceFactory.
         return ApkAsset(
             name = preferred.name,
             downloadUrl = preferred.browserDownloadUrl,
+            apiAssetUrl = preferred.apiUrl,
             sizeBytes = preferred.size,
         )
     }

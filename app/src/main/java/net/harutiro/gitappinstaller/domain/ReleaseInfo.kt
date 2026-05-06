@@ -2,7 +2,8 @@ package net.harutiro.gitappinstaller.domain
 
 data class ApkAsset(
     val name: String,
-    val downloadUrl: String,
+    val downloadUrl: String,        // browser_download_url (works for public repos)
+    val apiAssetUrl: String,        // https://api.github.com/repos/.../releases/assets/{id} (auth で private OK)
     val sizeBytes: Long,
 )
 
