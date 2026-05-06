@@ -101,7 +101,7 @@ class RepoListViewModel(
     fun refresh(id: Long) {
         val target = _items.value.firstOrNull { it.repo.id == id } ?: return
         viewModelScope.launch {
-            mutate(id) { it.copy(isChecking = true, errorMessage = null) }
+            mutate(id) { it.copy(isChecking = true, errorMessage = null, suggestLogin = false) }
             try {
                 val release = releaseDataSource.fetchLatestRelease(target.repo.owner, target.repo.repo)
                 val info = InstalledPackageInfo.lookup(app, target.repo.applicationId)
@@ -116,7 +116,13 @@ class RepoListViewModel(
                 Log.i(TAG, "refresh($id) appId=${target.repo.applicationId} installed=${info.installed} ver=${info.versionName} latestTag=${release.tagName} lastTag=${target.repo.lastInstalledTag} -> $state")
                 mutate(id) { it.copy(release = release, installedVersion = info.versionName, state = state, isChecking = false) }
             } catch (e: RepoNotFoundException) {
-                mutate(id) { it.copy(isChecking = false, errorMessage = "Repository not found (Public only)") }
+                val notAuthed = tokenStore.current().isNullOrBlank()
+                val message = if (notAuthed) {
+                    "リポジトリが見つかりません。Private の場合は GitHub にログインしてみてください。"
+                } else {
+                    "リポジトリが見つかりません（リポジトリ名が間違っているか、ログイン中アカウントに権限がありません）。"
+                }
+                mutate(id) { it.copy(isChecking = false, errorMessage = message, suggestLogin = notAuthed) }
             } catch (e: RateLimitedException) {
                 mutate(id) { it.copy(isChecking = false, errorMessage = "GitHub rate limit reached") }
             } catch (e: NoReleaseException) {

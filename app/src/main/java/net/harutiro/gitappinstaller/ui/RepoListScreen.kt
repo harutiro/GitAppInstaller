@@ -35,6 +35,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -110,6 +111,7 @@ fun RepoListScreen(
                         onInstall = { viewModel.install(uiState.repo.id) },
                         onOpen = { viewModel.openApp(uiState.repo.id) },
                         onDelete = { viewModel.remove(uiState.repo.id) },
+                        onLogin = onOpenSettings,
                     )
                 }
             }
@@ -146,6 +148,7 @@ private fun RepoCard(
     onInstall: () -> Unit,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    onLogin: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -213,6 +216,12 @@ private fun RepoCard(
                     color = Color.Red,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (ui.suggestLogin) {
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = onLogin) {
+                        Text("GitHub にログイン")
+                    }
+                }
             }
         }
     }

@@ -12,4 +12,6 @@ data class RepoUiState(
     val isChecking: Boolean = false,
     val isInstalling: Boolean = false,
     val errorMessage: String? = null,
+    /** 404 を返したが未ログインのとき true。Private リポジトリの可能性をユーザーに案内する。 */
+    val suggestLogin: Boolean = false,
 )
